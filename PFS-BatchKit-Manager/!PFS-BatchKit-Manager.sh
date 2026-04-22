@@ -78,12 +78,12 @@ press_enter() { cw; read -r -p "${1:-Press Enter to continue...}"; cn; }
 # ---- Helper: choice function (replaces CHOICE /C) ----
 # Usage: choice "YN" → sets CHOICE_RESULT to 1-based index
 choice() {
-    local chars="${1^^}"   # uppercase
+    local chars; chars=$(echo "$1" | tr '[:lower:]' '[:upper:]')
     local prompt="${2:-Select Option:}"
     local c
     while true; do
         cw; read -r -p "$prompt " c; cn
-        c="${c^^}"
+        c=$(echo "$c" | tr '[:lower:]' '[:upper:]')
         local idx=1
         for (( i=0; i<${#chars}; i++ )); do
             ch="${chars:$i:1}"
@@ -129,7 +129,7 @@ _verify_hdd() {
     if [[ -z "$hdl_path" ]]; then
         scan_ps2_hdd; return $?
     fi
-    if ! "$HDL_DUMP" query 2>/dev/null | grep -q "$hdl_path"; then
+    if ! "$HDL_DUMP" toc "$hdl_path" >/dev/null 2>&1; then
         hdl_path=""
         scan_ps2_hdd; return $?
     fi
@@ -183,10 +183,22 @@ _ping_host() {
 }
 
 # ---- Detect macOS disk device for hdl_dump ----
-# On macOS, hdl_dump uses /dev/diskN or /dev/rdiskN paths
-# hdl_dump query returns lines: /dev/diskN   Playstation 2 HDD   XXXXX MB
+# macOS hdl_dump has no "query" command; we enumerate disks with diskutil
+# and probe each with "hdl_dump toc" to see if it is a PS2 HDD.
 _list_ps2_hdds() {
-    "$HDL_DUMP" query 2>/dev/null | grep "Playstation 2 HDD"
+    while IFS= read -r disk; do
+        local dev="/dev/$disk"
+        # hdl_dump toc exits 0 only for a valid PS2 HDD
+        if "$HDL_DUMP" toc "$dev" >/dev/null 2>&1; then
+            local model; model=$(diskutil info "$dev" 2>/dev/null \
+                | grep -E "Device / Media Name|Media Name:" \
+                | head -1 | awk -F: '{print $2}' | xargs)
+            local size_mb; size_mb=$(_get_disk_size_mb "$dev")
+            echo "$dev   $model   ${size_mb}MB   Playstation 2 HDD"
+        fi
+    done < <(diskutil list 2>/dev/null \
+        | grep "^/dev/disk" | grep -v "^/dev/disk0" \
+        | awk '{print $1}' | sed 's|/dev/||')
 }
 
 _get_disk_model() {
@@ -344,7 +356,7 @@ scan_ps2_hdd() {
     local hdd_list
     hdd_list=$(_list_ps2_hdds)
     local total
-    total=$(echo "$hdd_list" | grep -c "Playstation 2 HDD" || echo 0)
+    total=$(echo "$hdd_list" | grep -c "Playstation 2 HDD" 2>/dev/null || echo 0)
 
     if [[ "$total" -eq 0 ]]; then
         cr; echo "        Playstation 2 HDD Not Detected"
@@ -365,7 +377,7 @@ scan_ps2_hdd() {
         [[ -z "$NumberPS2HDD" ]] && return 0
         hdl_path="/dev/disk${NumberPS2HDD}"
 
-        if ! "$HDL_DUMP" query 2>/dev/null | grep -q "$hdl_path"; then
+        if ! "$HDL_DUMP" toc "$hdl_path" >/dev/null 2>&1; then
             cr; echo ""; echo "        HDD Not Detected"; echo ""; cn
             rm -rf "$CACHE"
             press_enter
@@ -387,11 +399,11 @@ scan_ps2_hdd() {
     ModelePS2HDD="${ModelePS2HDD//Disk Device/}"
     ModelePS2HDD="${ModelePS2HDD#"${ModelePS2HDD%%[! ]*}"}"  # trim leading spaces
 
-    # Disk size from hdl_dump
-    local size_line
-    size_line=$("$HDL_DUMP" query 2>/dev/null | grep "$hdl_path" | head -1)
-    TotalHDD_Size=$(echo "$size_line" | awk '{print $3}')
-    TotalHDD_Size="${TotalHDD_Size//[^0-9]/}"
+    # Disk size from hdl_dump toc ("Total slice size: XXXXMB free: XXXXMB")
+    local toc_last
+    toc_last=$("$HDL_DUMP" toc "$hdl_path" 2>/dev/null | grep "Total slice size:" | head -1)
+    TotalHDD_Size=$(echo "$toc_last" | grep -oE '[0-9]+MB' | head -1 | tr -d 'MB')
+    [[ -z "$TotalHDD_Size" ]] && TotalHDD_Size=$(_get_disk_size_mb "$hdl_path")
     TotalHDD_Size_fmt=$(_fmt_size "$TotalHDD_Size")
 
     cw
@@ -1316,7 +1328,7 @@ transfer_ps2_games() {
     if [[ -z "$transferHDLServ" ]]; then
         cy; echo ""; echo ""; echo "Scanning for Playstation 2 HDDs:"
         echo "---------------------------------------------------"; cn
-        if ! "$HDL_DUMP" query 2>/dev/null | grep -q "$hdl_path"; then
+        if ! "$HDL_DUMP" toc "$hdl_path" >/dev/null 2>&1; then
             hdl_path=""
             scan_ps2_hdd; return
         fi
@@ -1429,7 +1441,7 @@ transfer_ps2_games() {
         (( gamecount++ ))
         local fname="${fpath%.*}"
         local filename="$(basename "$fpath")"
-        local ext="${fpath##*.}"; ext="${ext^^}"
+        local ext; ext=$(echo "${fpath##*.}" | tr '[:lower:]' '[:upper:]')
         local fdir="$(dirname "$fpath")"
         local disctype="unknown"
         local gameid="" title="" region="" dbtitle="" compressed="" DelExtracted=""
@@ -1452,7 +1464,7 @@ transfer_ps2_games() {
                     mv "$tmpext/"* "$fdir/" 2>/dev/null || true
                     filename="$(basename "$inner")"
                     fname="${filename%.*}"
-                    ext="${filename##*.}"; ext="${ext^^}"
+                    ext=$(echo "${filename##*.}" | tr '[:lower:]' '[:upper:]')
                     DelExtracted="yes"
                 fi
                 rm -rf "$tmpext"
@@ -1691,7 +1703,7 @@ mount $pops_partition"
         [[ -z "$fpath" ]] && continue
         (( gamecount++ ))
         local fname="$(basename "${fpath%.*}")"
-        local ext="${fpath##*.}"; ext="${ext^^}"
+        local ext; ext=$(echo "${fpath##*.}" | tr '[:lower:]' '[:upper:]')
         local fdir="$(dirname "$fpath")"
         local filename="$(basename "$fpath")"
 
@@ -2171,9 +2183,9 @@ copy_ps2_games_hdd() {
 
     local hdlhdd="$hdl_path"
     cy; echo ""; echo "Scanning for second PS2 HDD:"; cn
-    "$HDL_DUMP" query 2>/dev/null | grep "Playstation 2 HDD" | grep -v "$hdlhdd"
+    _list_ps2_hdds | grep -v "$hdlhdd"
     echo ""
-    echo "Enter disk number of DESTINATION HDD (or 'q' to cancel):"
+    echo "Enter disk number of DESTINATION HDD (e.g. 2 for /dev/disk2, or 'q' to cancel):"
     cw; read -r -p "Destination disk number: " dst_num; cn
     [[ -z "$dst_num" || "$dst_num" == "q" ]] && return
 
@@ -2182,12 +2194,17 @@ copy_ps2_games_hdd() {
         co; echo "You cannot use the same HDD as destination!"; cn; press_enter; return
     fi
 
+    if ! "$HDL_DUMP" toc "$hdlhdd2" >/dev/null 2>&1; then
+        cr; echo "Destination disk is not a PS2 HDD or not accessible."; cn
+        press_enter; return
+    fi
+
     echo ""
     cy; echo "HDD 1 (Source):"; cn
-    "$HDL_DUMP" query 2>/dev/null | grep "$hdlhdd"
+    diskutil info "$hdlhdd"  2>/dev/null | grep -E "Device:|Media Name:|Disk Size:" | head -3
     echo ""
     cy; echo "HDD 2 (Destination):"; cn
-    "$HDL_DUMP" query 2>/dev/null | grep "$hdlhdd2"
+    diskutil info "$hdlhdd2" 2>/dev/null | grep -E "Device:|Media Name:|Disk Size:" | head -3
     echo ""
 
     ask_yn "Confirm? [Y/N]" || return
@@ -2298,14 +2315,19 @@ delete_game() {
     clear; load_settings
     echo ""; cw; echo "Delete a PS2 Game:"; cn
     echo "---------------------------------------------------"
-    cat "$CACHE/PARTITION_HDL_GAME.txt" 2>/dev/null | head -50
+    # Show partition names (format: PP.SLUS-12345..TITLE)
+    "$HDL_DUMP" toc "$hdl_path" 2>/dev/null | grep "0x1337" | cut -c30-250 | head -50
     echo ""
-    cw; read -r -p "Enter game ID (e.g. SLUS_123.45): " del_gameid; cn
-    [[ -z "$del_gameid" ]] && return
+    cy; echo "Enter the PARTITION NAME as shown above (e.g. PP.SLUS-12345..TITLE)"
+    echo "Or the game ID prefix (e.g. SLUS-12345)"; cn
+    cw; read -r -p "Enter partition name: " del_part; cn
+    [[ -z "$del_part" ]] && return
 
-    cr; echo "Are you sure you want to delete game '$del_gameid'?"; cn
+    cr; echo "Are you sure you want to delete '$del_part'?"; cn
     ask_yn || return
-    "$HDL_DUMP" del "$hdl_path" "$del_gameid" 2>&1
+    # hdl_dump has no "del" on macOS — use pfsshell rmpart
+    printf "device %s\nrmpart \"%s\"\nexit\n" "$pfsshell_path" "$del_part" \
+        | "$PFSSHELL" 2>&1
     reload_hdd_cache
     cg; echo "Game deleted."; cn
     press_enter
@@ -2318,14 +2340,15 @@ rename_game() {
     clear; load_settings
     echo ""; cw; echo "Rename a PS2 Game:"; cn
     echo "---------------------------------------------------"
-    cat "$CACHE/PARTITION_HDL_GAME.txt" 2>/dev/null | head -50
+    "$HDL_DUMP" hdl_toc "$hdl_path" 2>/dev/null | head -50
     echo ""
-    cw; read -r -p "Enter game ID to rename: " ren_gameid; cn
+    cw; read -r -p "Enter game ID to rename (e.g. SLUS_123.45): " ren_gameid; cn
     [[ -z "$ren_gameid" ]] && return
     cw; read -r -p "Enter new title: " new_title; cn
     [[ -z "$new_title" ]] && return
 
-    "$HDL_DUMP" rename "$hdl_path" "$ren_gameid" "$new_title" 2>&1
+    # macOS hdl_dump uses "modify" instead of "rename"
+    "$HDL_DUMP" modify "$hdl_path" "$ren_gameid" "$new_title" 2>&1
     reload_hdd_cache
     cg; echo "Game renamed."; cn
     press_enter
@@ -2605,12 +2628,13 @@ pphide_unhide() {
     local action="$1"   # hide/unhide
     local flag="$2"     # -hide / -unhide
     clear; load_settings
-    echo ""; cw; echo "${action^} a partition:"; cn; echo ""
-    cat "$CACHE/PARTITION_HDL_GAME.txt" 2>/dev/null | head -50
+    echo ""; cw; echo "${action} a partition:"; cn; echo ""
+    "$HDL_DUMP" toc "$hdl_path" 2>/dev/null | grep "0x1337" | cut -c30-250 | head -50
     echo ""
-    cw; read -r -p "Enter game partition name (e.g. PP.SLUS-123..TITLE): " part_name; cn
+    cw; read -r -p "Enter game ID (e.g. SLUS_123.45): " part_name; cn
     [[ -z "$part_name" ]] && return
-    "$HDL_DUMP" "${action}" "$hdl_path" "$part_name" 2>&1
+    # macOS: use "modify" with -hide / -unhide flag
+    "$HDL_DUMP" modify "$hdl_path" "$part_name" "$flag" 2>&1
     reload_hdd_cache
     cg; echo "Done."; cn; press_enter
 }
@@ -2680,13 +2704,14 @@ custom_pp_header() {
 # =============================================================================
 rename_title_hddosd() {
     clear; load_settings
-    echo ""; cat "$CACHE/PARTITION_HDL_GAME.txt" 2>/dev/null | head -50
+    echo ""; "$HDL_DUMP" hdl_toc "$hdl_path" 2>/dev/null | head -50
     echo ""
-    cw; read -r -p "Enter partition name to rename: " part_name; cn
+    cw; read -r -p "Enter game ID to rename (e.g. SLUS_123.45): " part_name; cn
     [[ -z "$part_name" ]] && return
     cw; read -r -p "Enter new title: " new_title; cn
     [[ -z "$new_title" ]] && return
-    "$HDL_DUMP" rename "$hdl_path" "$part_name" "$new_title" 2>&1
+    # macOS: use "modify" instead of "rename"
+    "$HDL_DUMP" modify "$hdl_path" "$part_name" "$new_title" 2>&1
     reload_hdd_cache
     cg; echo "Title renamed."; cn; press_enter
 }
