@@ -160,7 +160,18 @@ _fmt_size() {
 }
 
 # ---- Helper: reload HDD cache ----
+# Must write current hdl_path/pfsshell_path to HDD.env BEFORE calling the
+# cache script, because the child process has no access to our variables.
 reload_hdd_cache() {
+    mkdir -p "$CACHE"
+    cat > "$CACHE/HDD.env" <<EOF
+hdl_path="$hdl_path"
+pfsshell_path="$pfsshell_path"
+NumberPS2HDD="$NumberPS2HDD"
+ModelePS2HDD="$ModelePS2HDD"
+TotalHDD_Size="$TotalHDD_Size"
+TotalHDD_Size_fmt="$TotalHDD_Size_fmt"
+EOF
     bash "$BAT/__ReloadHDD_cache.sh"
     [[ -f "$CACHE/HDD.env" ]] && source "$CACHE/HDD.env"
 }
