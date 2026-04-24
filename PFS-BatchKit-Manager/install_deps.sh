@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
 # install_deps.sh  –  macOS dependency installer for PFS-BatchKit-Manager
-# Downloads and places macOS binaries into PFS-BatchKit-Manager/BAT/
-# Installs Homebrew packages: sevenzip, gnu-sed, wget, macfuse, nbd
+# Place this file next to !PFS-BatchKit-Manager.sh and run it once.
+# Installs Homebrew packages: sevenzip, gnu-sed, wget, macfuse
 # =============================================================================
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BAT="$SCRIPT_DIR/PFS-BatchKit-Manager/BAT"
+BAT="$SCRIPT_DIR/BAT"
 TMP_DL="$SCRIPT_DIR/.deps_tmp"
 
 # ---- Colors ----
@@ -168,8 +168,8 @@ done
 rm -rf "$TMP_DL"
 
 # ---- Make main script executable ----
-MAIN_SCRIPT="$SCRIPT_DIR/PFS-BatchKit-Manager/!PFS-BatchKit-Manager.sh"
-CACHE_SCRIPT="$SCRIPT_DIR/PFS-BatchKit-Manager/BAT/__ReloadHDD_cache.sh"
+MAIN_SCRIPT="$SCRIPT_DIR/!PFS-BatchKit-Manager.sh"
+CACHE_SCRIPT="$SCRIPT_DIR/BAT/__ReloadHDD_cache.sh"
 [[ -f "$MAIN_SCRIPT" ]]  && chmod +x "$MAIN_SCRIPT"  && ok "Main script is executable"
 [[ -f "$CACHE_SCRIPT" ]] && chmod +x "$CACHE_SCRIPT" && ok "Cache script is executable"
 
@@ -177,7 +177,7 @@ CACHE_SCRIPT="$SCRIPT_DIR/PFS-BatchKit-Manager/BAT/__ReloadHDD_cache.sh"
 echo ""
 echo -e "${WHITE}==================================================="
 echo -e "  Installation complete!"
-echo -e "  Run: ./PFS-BatchKit-Manager/!PFS-BatchKit-Manager.sh"
+echo -e "  Run: sudo ./!PFS-BatchKit-Manager.sh"
 echo -e "===================================================${RESET}"
 echo ""
 

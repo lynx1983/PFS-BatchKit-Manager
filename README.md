@@ -47,9 +47,10 @@ PFS-BatchKit-Manager includes a native macOS port — `!PFS-BatchKit-Manager.sh`
   <p>
 
 1. Clone or download the repository
-2. From the **project root**, run the dependency installer:
+2. Go into the script folder and run the dependency installer:
 
 ```bash
+cd PFS-BatchKit-Manager
 bash install_deps.sh
 ```
 
@@ -58,7 +59,7 @@ This will install Homebrew packages, download the required PS2 tools (`hdl_dump`
 3. Launch the manager (requires administrator privileges):
 
 ```bash
-sudo ./PFS-BatchKit-Manager/!PFS-BatchKit-Manager.sh
+sudo ./!PFS-BatchKit-Manager.sh
 ```
 
 Or simply double-click the script in Finder — it will request elevated privileges automatically.
