@@ -15,6 +15,121 @@ PFS BatchKit Manager required the creation of several additional projects
 if my tools have helped you or saved you a lot of time and you would like to buy me a coffee or tea, please consider making a donation!
 [Donate](https://ko-fi.com/J3J6PIQ9O)
 
+---
+
+# macOS Version
+
+PFS-BatchKit-Manager includes a native macOS port — `!PFS-BatchKit-Manager.sh` — that provides the same functionality as the Windows batch script, adapted for macOS (Apple Silicon & Intel).
+
+<details>
+  <summary> <h7> <b> Requirements </b> </h7> </summary>
+  <p>
+
+- **macOS** 12 Monterey or later (Apple Silicon and Intel supported)
+- **Homebrew** (installed automatically by `install_deps.sh`)
+- **[macFUSE](https://macfuse.github.io/)** — required for PFS partition mounting (`Explore PS2 HDD`)
+- The following are installed automatically by the dependency installer:
+
+| Tool | Source |
+|------|--------|
+| `hdl_dump` | [ps2homebrew/hdl-dump](https://github.com/ps2homebrew/hdl-dump/releases) |
+| `pfsshell` | [ps2homebrew/pfsshell](https://github.com/ps2homebrew/pfsshell/releases) |
+| `pfsfuse` | [ps2homebrew/pfsshell](https://github.com/ps2homebrew/pfsshell/releases) |
+| `7zz` | via Homebrew (`sevenzip`) |
+| `gsed` | via Homebrew (`gnu-sed`) |
+
+  ------
+  </p>
+</details>
+
+<details>
+  <summary> <h7> <b> Installation & First Launch </b> </h7> </summary>
+  <p>
+
+1. Clone or download the repository
+2. From the **project root**, run the dependency installer:
+
+```bash
+bash install_deps.sh
+```
+
+This will install Homebrew packages, download the required PS2 tools (`hdl_dump`, `pfsshell`, `pfsfuse`), remove Gatekeeper quarantine flags and make the main script executable.
+
+3. Launch the manager (requires administrator privileges):
+
+```bash
+sudo ./PFS-BatchKit-Manager/!PFS-BatchKit-Manager.sh
+```
+
+Or simply double-click the script in Finder — it will request elevated privileges automatically.
+
+  ------
+  </p>
+</details>
+
+<details>
+  <summary> <h7> <b> Connecting a PS2 HDD on macOS </b> </h7> </summary>
+  <p>
+
+**Direct connection (USB/SATA adapter):**
+
+Connect the PS2 HDD via a USB-to-SATA adapter or SATA card. macOS will detect the disk but will **not** mount its partitions (PS2 PFS format is unsupported by macOS). The script detects it automatically via `hdl_dump`.
+
+**Network (NBD Server):**
+
+1. On your PS2, launch OPL with NBD support enabled
+2. In OPL go to `Settings` → `Enable Write Operation` → `ON`, then `Start NBD Server`
+3. In PFS-BatchKit-Manager go to `HDD Management` → `NBD Server` → `Mount Device`
+4. Enter your PS2's IP address
+5. The HDD will appear as a local block device — all features become available
+
+  ------
+  </p>
+</details>
+
+<details>
+  <summary> <h7> <b> Supported Features </b> </h7> </summary>
+  <p>
+
+| Feature | Status |
+|---------|--------|
+| Transfer PS2 Games (ISO, BIN/CUE, ZSO, ZIP, 7z, RAR) | ✅ |
+| Transfer PS1 Games (POPS / VCD) | ✅ |
+| OPL Resources (ART, CFG, CHT, THM, VMC) — Transfer & Extract | ✅ |
+| Download Artworks (PS2 & PS1, archive.org OPLM) | ✅ |
+| Download CFG Compatibility Database | ✅ |
+| Download Applications | ✅ |
+| HDD Management (create/delete partitions, MBR, format) | ✅ |
+| HDD-OSD (Browser 2.0) Management | ✅ |
+| PSBBN / XMB Partition Headers | ✅ |
+| NBD Server (network HDD access) | ✅ |
+| Explore PS2 HDD (mount PFS via macFUSE) | ✅ |
+| ZSO ↔ ISO conversion | ✅ |
+| BIN/CUE → VCD conversion (PS1) | ✅ |
+| HDD-OSD icon download (archive.org) | ✅ |
+| Change OPL Resources Partition (`__common` / `+OPL`) | ✅ |
+
+  ------
+  </p>
+</details>
+
+<details>
+  <summary> <h7> <b> macOS-specific Notes </b> </h7> </summary>
+  <p>
+
+- **Administrator privileges** are required (the script calls `sudo` automatically if not already root).
+- macOS ships with **Bash 3.2**. The script is fully compatible with Bash 3.2 — no Bash 4+ features are used.
+- **macFUSE** must be installed and its kernel extension approved in `System Settings → Privacy & Security` before the `Explore PS2 HDD` feature can be used.
+- Direct disk access on macOS requires the disk to be **unmounted** first. If macOS auto-mounts any partition, the script will prompt you to unmount it.
+- The `install_deps.sh` installer automatically removes **Gatekeeper quarantine** flags from downloaded binaries (`xattr -d com.apple.quarantine`). If you download tools manually, run the same command on them.
+- Settings (language, OPL partition name) are saved to `PFS-BatchKit-Manager/settings.ini` and persist between sessions.
+
+  ------
+  </p>
+</details>
+
+---
+
 # How to use
 
 <details>
