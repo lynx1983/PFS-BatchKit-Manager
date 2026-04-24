@@ -174,6 +174,8 @@ NumberPS2HDD="$NumberPS2HDD"
 ModelePS2HDD="$ModelePS2HDD"
 TotalHDD_Size="$TotalHDD_Size"
 TotalHDD_Size_fmt="$TotalHDD_Size_fmt"
+OPLPART="$OPLPART"
+CUSTOM_OPLPART="$CUSTOM_OPLPART"
 EOF
     bash "$BAT/__ReloadHDD_cache.sh"
     [[ -f "$CACHE/HDD.env" ]] && source "$CACHE/HDD.env"
@@ -183,17 +185,23 @@ EOF
 load_settings() {
     [[ -f "$SETTINGS" ]] && source "$SETTINGS"
     [[ -f "$CACHE/HDD.env" ]] && source "$CACHE/HDD.env"
+    # Strip stray carriage returns that may come from CRLF files on PS2 HDD
+    OPLPART="${OPLPART//$'\r'/}"
+    CUSTOM_OPLPART="${CUSTOM_OPLPART//$'\r'/}"
 }
 
 # ---- Helper: save settings ----
 save_settings() {
-    echo "TitlesLang=$TitlesLang" > "$SETTINGS"
-    echo "DBLang=$DBLang"        >> "$SETTINGS"
+    echo "TitlesLang=$TitlesLang"       > "$SETTINGS"
+    echo "DBLang=$DBLang"              >> "$SETTINGS"
+    echo "OPLPART=$OPLPART"            >> "$SETTINGS"
+    echo "CUSTOM_OPLPART=$CUSTOM_OPLPART" >> "$SETTINGS"
 }
 
 # ---- Helper: check connectivity ----
 _ping_host() {
-    ping -c 1 -W 2 "$1" &>/dev/null
+    # macOS ping: -W is in milliseconds (unlike Linux where it is seconds)
+    ping -c 1 -W 2000 -t 2 "$1" &>/dev/null
 }
 
 # ---- Detect macOS disk device for hdl_dump ----
@@ -2854,9 +2862,9 @@ change_opl_partition() {
         echo "exit"
     } | "$PFSSHELL" >/dev/null 2>&1
 
-    # Update cache
-    "$SED" -i'' "s/^OPLPART=.*/OPLPART=\"$OPLPART\"/" "$CACHE/HDD.env" 2>/dev/null || true
-    "$SED" -i'' "s/^CUSTOM_OPLPART=.*/CUSTOM_OPLPART=\"$CUSTOM_OPLPART\"/" "$CACHE/HDD.env" 2>/dev/null || true
+    # Persist to settings and current-session cache
+    save_settings
+    reload_hdd_cache
 
     cg; echo "OPL partition changed to: $OPLPART"; cn
     press_enter
@@ -2867,22 +2875,381 @@ change_opl_partition() {
 # =============================================================================
 download_art() {
     clear; load_settings
-    echo ""; echo "Download game artwork for OPL..."
-    echo "Source: archive.org / HDD-OSD-Icons-Pack"
+    mkdir -p "$TMP" "$SCRIPT_DIR/ART"
+
+    # ---- Art type ----
+    cw; echo ""; echo "Download ARTs:"
+    echo "---------------------------------------------------"; cn
+    cg; echo "        1) Yes (For PS2 Games)"; cn
+    cr; echo "        2) No"; cn
+    cy; echo "        3) Yes (For PS1 Games)"; cn
     echo ""
-    cw; read -r -p "Enter game ID for artwork (e.g. SLUS_123.45): " art_id; cn
-    [[ -z "$art_id" ]] && return
+    read -r -p "Select Option [1/2/3]: " _ch
+    local ARTType
+    case "$_ch" in
+        1) ARTType="PS2" ;;
+        3) ARTType="PS1" ;;
+        *) return ;;
+    esac
 
-    mkdir -p "$SCRIPT_DIR/ART"
-    local art_id2="${art_id//_/-}"; art_id2="${art_id2/./}"
+    # ---- Device ----
+    cy; echo ""; echo "What device will you be using?"; cn
+    echo "  1 = HDD (Internal)"
+    echo "  2 = USB"
+    read -r -p "Select Option [1/2]: " _ch
+    local device HDDPFS HDDPATH
+    case "$_ch" in
+        1) device="HDD"; HDDPFS="Yes"; HDDPATH="$SCRIPT_DIR" ;;
+        2) device="USB"; HDDPFS=""
+           cy; echo "Do you want to change the default directory?"; cn
+           echo "(Useful if your games are on another drive)"
+           read -r -p "[y/N]: " _yn
+           if [[ "$_yn" =~ ^[Yy]$ ]]; then
+               read -r -p "Enter full path (e.g. /Volumes/MyDrive): " HDDPATH
+               [[ -z "$HDDPATH" ]] && HDDPATH="$SCRIPT_DIR"
+           else
+               HDDPATH="$SCRIPT_DIR"
+           fi ;;
+        *) return ;;
+    esac
 
-    for art_file in "${art_id}_COV.jpg" "${art_id}_COV2.jpg" "${art_id}_SCR1.jpg" "${art_id}_SCR2.jpg" "${art_id}_ICO.png"; do
-        echo "  Downloading: $art_file"
-        curl -s "https://archive.org/download/hdd-osd-icons-pack/HDD-OSD-Icons-Pack.zip/PS2%2F${art_id2}%2F${art_file}" \
-            -o "$SCRIPT_DIR/ART/$art_file" 2>/dev/null
-        [[ ! -s "$SCRIPT_DIR/ART/$art_file" ]] && rm -f "$SCRIPT_DIR/ART/$art_file"
-    done
-    cg; echo "Art download attempt complete."; cn; press_enter
+    # ---- Update mode ----
+    cw; echo ""; echo "Download ARTs for all $ARTType installed games?"
+    echo "---------------------------------------------------"; cn
+    cg; echo "        1) Yes (Update Missing ART)"; cn
+    cr; echo "        2) No"; cn
+    cy; echo "        3) Yes (Replace ART)"; cn
+    echo ""
+    read -r -p "Select Option [1/2/3]: " _ch
+    local UpdateOnlyMissingART
+    case "$_ch" in
+        1) UpdateOnlyMissingART="Yes" ;;
+        2) return ;;
+        3) UpdateOnlyMissingART="No" ;;
+        *) return ;;
+    esac
+
+    # ---- PS1 OPL APPS TAB ----
+    local OPLAPPSTAB="No"
+    if [[ "$ARTType" == "PS1" ]]; then
+        cy; echo ""
+        echo "Do you want to download ARTs for PS1 shortcuts for OPL APPS TAB?"; cn
+        read -r -p "[y/N]: " _yn
+        [[ "$_yn" =~ ^[Yy]$ ]] && OPLAPPSTAB="Yes"
+    fi
+
+    # ---- Transfer to OPL partition (HDD only) ----
+    local TransferART="No"
+    if [[ "$HDDPFS" == "Yes" ]]; then
+        cy; echo ""
+        echo "Do you want to transfer the ARTs to the OPL Resources Partition after the update?"; cn
+        read -r -p "[y/N]: " _yn
+        [[ "$_yn" =~ ^[Yy]$ ]] && TransferART="Yes"
+    fi
+
+    # ---- Local ART.zip ----
+    local uselocalART="no"
+    if [[ -f "$SCRIPT_DIR/ART.zip" ]]; then
+        cy; echo ""; echo "ART.zip detected – do you want to use it?"; cn
+        read -r -p "[y/N]: " _yn
+        [[ "$_yn" =~ ^[Yy]$ ]] && uselocalART="yes"
+    fi
+
+    # ---- Connectivity check ----
+    local DownloadART="no"
+    if [[ "$uselocalART" == "no" ]]; then
+        echo ""; echo "Checking internet connection for ART..."
+        if ! _ping_host archive.org; then
+            cr; echo "Unable to PING!"; cn
+            if [[ -f "$SCRIPT_DIR/ART.zip" ]]; then
+                uselocalART="yes"
+            else
+                press_enter; return
+            fi
+        else
+            curl -L -s \
+                "https://archive.org/download/OPLM_ART_2024_09/OPLM_ART_2024_09.zip/PS1%2FSCES_000.01%2FSCES_000.01_COV.png" \
+                -o "$TMP/SCES_000.01_COV.png" 2>/dev/null
+            [[ ! -s "$TMP/SCES_000.01_COV.png" ]] && rm -f "$TMP/SCES_000.01_COV.png"
+            if [[ ! -f "$TMP/SCES_000.01_COV.png" ]]; then
+                cr; echo ""; echo "Unable to connect to archive.org"; cn
+                if [[ -f "$SCRIPT_DIR/ART.zip" ]]; then
+                    uselocalART="yes"
+                    echo "Switching to offline mode (ART.zip)"
+                    press_enter
+                else
+                    press_enter; return
+                fi
+            else
+                DownloadART="yes"
+                rm -f "$TMP/SCES_000.01_COV.png"
+            fi
+        fi
+    fi
+
+    # ---- HDD: verify partitions ----
+    local POPSPART=""
+    if [[ "$HDDPFS" == "Yes" ]]; then
+        _require_hdd || return
+
+        echo ""; echo "Detecting OPL Resources Partition:"
+        echo "---------------------------------------------------"
+        local opl_found
+        opl_found=$(grep -ow "$OPLPART" "$CACHE/PARTITION_PS2HDD.txt" 2>/dev/null | head -1)
+        if [[ "$opl_found" == "$OPLPART" ]]; then
+            cg; echo "           $OPLPART - Partition Detected"; cn
+        else
+            cr; echo "        $OPLPART - Partition NOT Detected"
+            echo "            Partition Must Be Created"; cn
+            press_enter; return
+        fi
+
+        if [[ "$ARTType" == "PS1" ]]; then
+            echo ""; echo "Detecting POPS Partition:"
+            echo "---------------------------------------------------"
+            POPSPART=$(grep -oE '__.POPS[0-9]?' "$CACHE/PARTITION_PS2HDD.txt" 2>/dev/null | head -1)
+            if [[ -n "$POPSPART" ]]; then
+                cg; echo "                Partition - Detected ($POPSPART)"; cn
+            else
+                cr; echo "             No POPS partition detected"
+                echo "              Partition Must Be Created"; cn
+                press_enter; return
+            fi
+            press_enter
+        fi
+    fi
+
+    # ---- Build game list ----
+    clear
+    cw; echo ""; echo "Scanning Games List:"
+    echo "---------------------------------------------------"; cn
+
+    local games_list="$TMP/${ARTType}Games.txt"
+    rm -f "$games_list"; touch "$games_list"
+
+    if [[ "$ARTType" == "PS1" ]]; then
+        if [[ "$device" == "HDD" ]]; then
+            # List VCD files from POPS partition via pfsshell
+            local pfs_pops_cmds="device $pfsshell_path
+mount $POPSPART
+ls
+umount
+exit"
+            pfsshell_run "$pfs_pops_cmds" 2>&1 \
+                | grep -iE '\.VCD$' \
+                | grep -iE '[A-Z]{4}_[0-9]{3}\.[0-9]{2}' \
+                | sed -E 's/\.[^.]*$//; s/([A-Z]+_[0-9]+\.[0-9]+)\./\1 /' \
+                >> "$games_list"
+        else
+            # USB: parse VCD files
+            local pops_dir="$HDDPATH/POPS"
+            if [[ -d "$pops_dir" ]]; then
+                while IFS= read -r vcd; do
+                    local vcd_base; vcd_base=$(basename "${vcd%.*}")
+                    local gameid=""
+                    if [[ -x "$BAT/UPSX_SID" ]]; then
+                        gameid=$("$BAT/UPSX_SID" "$vcd" -1 2>/dev/null | tr -d '[:space:]')
+                    fi
+                    [[ -z "$gameid" ]] && \
+                        gameid=$(echo "$vcd_base" | grep -oE '[A-Z]{4}_[0-9]{3}\.[0-9]{2}' | head -1)
+                    [[ -n "$gameid" ]] && echo "$gameid $vcd_base" >> "$games_list"
+                done < <(find "$pops_dir" -maxdepth 1 -iname "*.VCD" 2>/dev/null | sort)
+            fi
+        fi
+    else
+        # PS2
+        if [[ "$device" == "HDD" ]]; then
+            if [[ -f "$CACHE/PS2_GAMES_HDD.txt" ]]; then
+                grep -v "^type" "$CACHE/PS2_GAMES_HDD.txt" \
+                    | grep -oE '[A-Z]{4}_[0-9]{3}\.[0-9]{2}.*' \
+                    | sed 's/  */ /g' \
+                    >> "$games_list"
+            fi
+        else
+            # USB: scan DVD/ and CD/ folders
+            for _d in DVD CD; do
+                local _folder="$HDDPATH/$_d"
+                [[ ! -d "$_folder" ]] && continue
+                while IFS= read -r isofile; do
+                    local fname; fname=$(basename "${isofile%.*}")
+                    local gameid=""
+                    [[ -x "$HDL_DUMP" ]] && \
+                        gameid=$("$HDL_DUMP" cdvd_info2 "$isofile" 2>/dev/null \
+                            | grep -oE '[A-Z]{4}_[0-9]{3}\.[0-9]{2}' | head -1)
+                    [[ -n "$gameid" ]] && echo "$gameid $fname" >> "$games_list"
+                done < <(find "$_folder" -maxdepth 1 \( -iname "*.iso" -o -iname "*.cue" \) 2>/dev/null | sort)
+            done
+            # UL format
+            if [[ -f "$HDDPATH/ul.cfg" ]]; then
+                grep -aP '[\x20-\x7E]' "$HDDPATH/ul.cfg" 2>/dev/null \
+                    | paste - - \
+                    | awk '{print $NF, $1, $2}' \
+                    | cut -c4-150 \
+                    >> "$games_list" || true
+            fi
+        fi
+    fi
+
+    sort -k2 "$games_list" -o "$games_list" 2>/dev/null || true
+
+    # ---- Scan existing ART files ----
+    mkdir -p "$HDDPATH/ART"
+    local art_files_list="$TMP/ARTFiles.txt"
+    rm -f "$art_files_list"; touch "$art_files_list"
+
+    if [[ "$HDDPFS" == "Yes" && "$UpdateOnlyMissingART" == "Yes" ]]; then
+        echo ""; echo "Scanning Artwork Files on OPL partition..."
+        echo "---------------------------------------------------"
+        local pfs_scan_cmds="device $pfsshell_path
+mount $OPLPART"
+        if [[ -n "$CUSTOM_OPLPART" ]]; then
+            pfs_scan_cmds+="
+mkdir OPL
+cd OPL"
+        fi
+        pfs_scan_cmds+="
+cd ART
+ls
+cd ..
+umount
+exit"
+        pfsshell_run "$pfs_scan_cmds" 2>&1 \
+            | grep -iE '\.(png|jpg)$' \
+            > "$art_files_list"
+        echo "        Completed..."
+    else
+        find "$HDDPATH/ART" -maxdepth 1 \( -iname "*.png" -o -iname "*.jpg" \) \
+            2>/dev/null -exec basename {} \; > "$art_files_list" || true
+    fi
+
+    # ---- Per-game download loop ----
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local Gameid; Gameid=$(echo "$line" | awk '{print $1}')
+        local Gamename; Gamename=$(echo "$line" | cut -d' ' -f2-)
+        [[ -z "$Gameid" ]] && continue
+
+        echo ""; echo "$Gamename"
+        echo "$Gameid"
+        mkdir -p "$TMP/${ARTType}/$Gameid"
+
+        local _art_file
+        for _art_file in \
+            "${Gameid}_COV.png" \
+            "${Gameid}_COV2.png" \
+            "${Gameid}_ICO.png" \
+            "${Gameid}_LAB.png" \
+            "${Gameid}_LGO.png" \
+            "${Gameid}_BG_00.png" \
+            "${Gameid}_SCR_00.png" \
+            "${Gameid}_SCR_01.png"
+        do
+            local ART_NAME="$_art_file"
+            local ART_NAME2="${ART_NAME%.png}"
+
+            # Rename BG/SCR files (OPL convention)
+            [[ "$ART_NAME2" == "${Gameid}_BG_00"  ]] && ART_NAME2="${Gameid}_BG"
+            [[ "$ART_NAME2" == "${Gameid}_SCR_00" ]] && ART_NAME2="${Gameid}_SCR"
+            [[ "$ART_NAME2" == "${Gameid}_SCR_01" ]] && ART_NAME2="${Gameid}_SCR2"
+
+            # OPL APPS TAB renaming (PS1 only)
+            if [[ "$OPLAPPSTAB" == "Yes" ]]; then
+                local _suffix="${ART_NAME2:11}"   # strip 11-char game ID prefix
+                if [[ "$device" == "USB" ]]; then
+                    ART_NAME2="XX.${Gamename}.ELF${_suffix}"
+                else
+                    ART_NAME2="${Gameid}.${Gamename}.ELF${_suffix}"
+                fi
+            fi
+
+            # Replace mode: wipe existing entry
+            if [[ "$UpdateOnlyMissingART" == "No" ]]; then
+                > "$art_files_list"
+                rm -f "$HDDPATH/ART/${ART_NAME2}.png" 2>/dev/null || true
+            fi
+
+            # Skip if already present
+            grep -qw "${ART_NAME2}.png" "$art_files_list" 2>/dev/null && continue
+
+            local dl_dest="$TMP/${ARTType}/$Gameid/$ART_NAME"
+
+            # 1) Try custom ART pack
+            local custom_zip="$BAT/ART_CUSTOM_GAMEID.zip"
+            if [[ -f "$custom_zip" ]]; then
+                "$SEVENZIP" e -bso0 "$custom_zip" \
+                    -o"$TMP/${ARTType}/$Gameid" \
+                    "${ARTType}/${ART_NAME}" -r -y >/dev/null 2>&1 || true
+            fi
+
+            # 2) Download or extract from local pack
+            if [[ ! -s "$dl_dest" ]]; then
+                if [[ "$uselocalART" == "no" ]]; then
+                    local _url="https://archive.org/download/OPLM_ART_2024_09/OPLM_ART_2024_09.zip/${ARTType}%2F${Gameid}%2F${ART_NAME}"
+                    curl -s "$_url" -o "$dl_dest" 2>/dev/null
+                else
+                    "$SEVENZIP" x -bso0 "$SCRIPT_DIR/ART.zip" \
+                        -o"$TMP" "${ARTType}/${Gameid}/${ART_NAME}" -r -y >/dev/null 2>&1 || true
+                fi
+            fi
+
+            # 3) Move if successful
+            if [[ -s "$dl_dest" ]]; then
+                mv "$dl_dest" "$HDDPATH/ART/${ART_NAME2}.png" 2>/dev/null || true
+                if [[ -f "$HDDPATH/ART/${ART_NAME2}.png" ]]; then
+                    co; echo "  + ${ART_NAME2}.png"; cn
+                fi
+            else
+                rm -f "$dl_dest" 2>/dev/null || true
+            fi
+        done
+
+        rm -rf "$TMP/${ARTType}/$Gameid"
+
+    done < "$games_list"
+
+    # ---- Optional: transfer ART folder to OPL partition ----
+    if [[ "$HDDPFS" == "Yes" && "$TransferART" == "Yes" ]]; then
+        echo ""; echo "---------------------------------------------------"
+        cw; echo "        Creating transfer queue..."; cn
+
+        local pfs_put_cmds="device $pfsshell_path
+mount $OPLPART"
+        if [[ -n "$CUSTOM_OPLPART" ]]; then
+            pfs_put_cmds+="
+mkdir OPL
+cd OPL"
+        fi
+        pfs_put_cmds+="
+mkdir ART
+cd ART"
+
+        cd "$HDDPATH/ART" 2>/dev/null || true
+        while IFS= read -r _artf; do
+            [[ -z "$_artf" ]] && continue
+            pfs_put_cmds+="
+put \"$_artf\""
+        done < <(find . -maxdepth 1 \( -name "*.png" -o -name "*.jpg" \) 2>/dev/null \
+                    | sed 's|^\./||' | sort)
+        pfs_put_cmds+="
+ls -l
+umount
+exit"
+        cd "$SCRIPT_DIR" 2>/dev/null || true
+
+        cw; echo "        Installing queue..."; cn
+        mkdir -p "$LOG"
+        pfsshell_run "$pfs_put_cmds" 2>&1 \
+            | grep -iE '\.(png|jpg)$' \
+            > "$LOG/PFS-ART.log"
+        echo "        Completed."
+    fi
+
+    rm -rf "$TMP" && mkdir -p "$TMP"
+
+    echo ""; echo "---------------------------------------------------"
+    cg; echo "Downloading completed..."; cn
+    echo ""
+    press_enter
 }
 
 # =============================================================================

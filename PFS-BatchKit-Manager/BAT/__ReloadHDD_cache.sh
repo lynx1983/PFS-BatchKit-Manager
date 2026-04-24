@@ -152,7 +152,9 @@ fi
 if [[ ! -f "$TMP/conf_hdd.cfg" ]]; then
     OPLPART="__common"
 else
-    OPLPART=$(grep "hdd_partition=" "$TMP/conf_hdd.cfg" 2>/dev/null | cut -d= -f2)
+    # cut -d= -f2 + tr -d '\r' strips Windows CRLF that pfsshell may carry over
+    OPLPART=$(grep "hdd_partition=" "$TMP/conf_hdd.cfg" 2>/dev/null \
+        | head -1 | cut -d= -f2 | tr -d '\r')
     [[ -z "$OPLPART" ]] && OPLPART="__common"
 fi
 
