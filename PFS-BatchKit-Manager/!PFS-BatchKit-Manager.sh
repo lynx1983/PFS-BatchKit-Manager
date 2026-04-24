@@ -6,6 +6,9 @@
 # Run install_deps.sh from the project root to install all dependencies.
 # =============================================================================
 
+# ---- Bash 3.2 compatibility helper (macOS ships bash 3.2, no ${var,,}) ----
+tolower() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+
 # ---- Require sudo (admin) ----
 if [[ "$EUID" -ne 0 ]]; then
     echo "Requesting administrator privileges..."
@@ -1463,9 +1466,9 @@ transfer_ps2_games() {
         cd "$fdir" || continue
 
         # Extract archive
-        case "${ext,,}" in
+        case "$(tolower "$ext")" in
             zip|7z|rar)
-                compressed="${ext,,}"
+                compressed="$(tolower "$ext")"
                 local tmpext="$fdir/~TMP~_${gamecount}"
                 mkdir -p "$tmpext"
                 "$SEVENZIP" x -bso0 "$fpath" -o"$tmpext" >/dev/null 2>&1
@@ -1491,7 +1494,7 @@ transfer_ps2_games() {
             cy; echo "  Multi-track BIN detected – merge not supported on macOS yet"; cn
         fi
 
-        case "${ext,,}" in
+        case "$(tolower "$ext")" in
             cue) ext="CUE" ;;
             iso) ext="ISO" ;;
             zso) ext="ZSO"
@@ -1503,7 +1506,7 @@ transfer_ps2_games() {
 
         # Get disc info
         if [[ -n "$ext" ]]; then
-            "$HDL_DUMP" cdvd_info2 "./$fname.$ext" > "$TMP/cdvd_info.txt" 2>/dev/null || true
+            "$HDL_DUMP" cdvd_info2 "$fname.$ext" > "$TMP/cdvd_info.txt" 2>/dev/null || true
             while IFS= read -r line; do
                 [[ "$line" == *"CD"* ]]          && disctype="CD"
                 [[ "$line" == *"DVD"* ]]          && disctype="DVD"
@@ -1580,7 +1583,7 @@ transfer_ps2_games() {
         [[ ! -f "$HDL_DUMP_STABLE" ]] && hdl_cmd="$HDL_DUMP"
 
         if [[ -z "$Game_Installed" ]]; then
-            "$hdl_cmd" "inject_${disctype,,}" "$hdl_path" "$title" "$fname.$install_ext" \
+            "$hdl_cmd" "inject_$(tolower "$disctype")" "$hdl_path" "$title" "$fname.$install_ext" \
                 "$gameid" "*u4" $GameHide 2>&1 || true
         else
             echo "$hdl_path partition with such name already exists: \"$title\""
