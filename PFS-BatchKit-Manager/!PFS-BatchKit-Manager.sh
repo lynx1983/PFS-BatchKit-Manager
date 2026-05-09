@@ -3185,7 +3185,7 @@ exit"
             if [[ ! -s "$dl_dest" ]]; then
                 if [[ "$uselocalART" == "no" ]]; then
                     local _url="https://archive.org/download/OPLM_ART_2024_09/OPLM_ART_2024_09.zip/${ARTType}%2F${Gameid}%2F${ART_NAME}"
-                    curl -s "$_url" -o "$dl_dest" 2>/dev/null
+                    curl -L "$_url" -o "$dl_dest" 2>/dev/null
                 else
                     "$SEVENZIP" x -bso0 "$SCRIPT_DIR/ART.zip" \
                         -o"$TMP" "${ARTType}/${Gameid}/${ART_NAME}" -r -y >/dev/null 2>&1 || true
@@ -3221,7 +3221,8 @@ cd OPL"
         fi
         pfs_put_cmds+="
 mkdir ART
-cd ART"
+cd ART
+lcd ART"
 
         cd "$HDDPATH/ART" 2>/dev/null || true
         while IFS= read -r _artf; do
